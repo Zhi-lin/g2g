@@ -288,7 +288,7 @@ class CoNLLXReaderSDP(object):
             typelist = []
             for x in tokens[8].split("|"):
                 if x != '_':
-                    p = x.split(":")
+                    p = x.split(":",1) # Jeffrey
                     headlist.append(int(p[0]))
                     typelist.append(p[1])
 

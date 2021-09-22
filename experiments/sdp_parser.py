@@ -268,10 +268,10 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
-        if pretrained_lm == "sroberta":
-            iterate = iterate_data_g2g
-        else:
-            iterate = iterate_data
+        # if pretrained_lm == "sroberta":
+        #     iterate = iterate_data_g2g
+        # else:
+        iterate = iterate_data
         lan_id = None
 
     if ensemble:
@@ -300,15 +300,15 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             input_elmo = input_elmo.to(device)
         else:
             input_elmo = None
-        if pretrained_lm == "sroberta":
-            _src_heads = data['SRC_HEAD']
-            _src_types = data['SRC_TYPE']
-            bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
-            bpes = bpes.to(device)
-            first_idx = first_idx.to(device)
-            src_heads = src_heads.to(device)
-            src_types = src_types.to(device)
-        elif pretrained_lm != "none":
+        # if pretrained_lm == "sroberta":
+        #     _src_heads = data['SRC_HEAD']
+        #     _src_types = data['SRC_TYPE']
+        #     bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
+        #     bpes = bpes.to(device)
+        #     first_idx = first_idx.to(device)
+        #     src_heads = src_heads.to(device)
+        #     src_types = src_types.to(device)
+        if pretrained_lm != "none":
             src_heads, src_types = None, None
             bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
             bpes = bpes.to(device)
@@ -528,22 +528,37 @@ def train(args):
     elif data_format == "ud":
         # data_paths=dev_path + test_path
         data_paths = dev_path
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
-                                                                                            max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
-                                                                                            expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+    if pretrained_lm=="sroberta":
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_source,rel_alphabet_target = conllx_data.create_alphabets_MMoE(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
+                                                                                                max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+                                                                                                expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+    else:
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict,
+                                                                                                max_vocabulary_size=args.max_vocab_size, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
+                                                                                                expand_with_pretrained=(only_pretrain_static), task_type="sdp")
+
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
     num_words = word_alphabet.size()
     num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
-    num_rels = rel_alphabet.size()
+    if pretrained_lm == "sroberta":
+        num_rels_source = rel_alphabet_source.size()
+        num_rels_target = rel_alphabet_target.size()
+    else:
+        num_rels = rel_alphabet.size()
+
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
-    logger.info("Rel Alphabet Size: %d" % num_rels)
+    if pretrained_lm == "sroberta":
+        logger.info("Rel Alphabet Source Size : %d" % num_rels_source)
+        logger.info("Rel Alphabet Target Size : %d" % num_rels_target)
+    else:
+        logger.info("Rel Alphabet  Size : %d" % num_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -630,7 +645,7 @@ def train(args):
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if model_type == 'Biaffine':
-        network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
+        network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels_source,num_rels_target, device=device, embedd_word=word_table, embedd_char=char_table,
                                     use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
                                     lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans)
     else:
@@ -695,9 +710,10 @@ def train(args):
     if alg == 'graph':
         if pretrained_lm=="sroberta":
 
-            data_train = conllu_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            data_train = conllu_data.read_bucketed_data_MMoE(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_source,rel_alphabet_target, normalize_digits=args.normalize_digits,
+                                                         symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-            data_dev = conllu_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+            data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_target, normalize_digits=args.normalize_digits, symbolic_root=True,
                                              pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         else:
             data_train = data_reader.read_bucketed_data_sdp(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
@@ -708,7 +724,7 @@ def train(args):
             data_test = None
         else:
             if pretrained_lm=="sroberta":
-                data_test = conllu_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, normalize_digits=args.normalize_digits, symbolic_root=True,
+                data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_target, normalize_digits=args.normalize_digits, symbolic_root=True,
                                                   pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
 
             else:
@@ -731,8 +747,8 @@ def train(args):
         num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
-    pred_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
-    gold_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    pred_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_target)
+    gold_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet_target)
 
     best_ucorrect = 0.0
     best_lcorrect = 0.0
@@ -851,24 +867,24 @@ def train(args):
                     print("words:{}".format(words.size()))
             else:
                 input_elmo = None
-            if pretrained_lm == "sroberta":
-
-                _src_heads = data['SRC_HEAD']
-                _src_types = data['SRC_TYPE']
-                bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
-                bpes = bpes.to(device)
-                first_idx = first_idx.to(device)
-                src_heads = src_heads.to(device)
-                src_types = src_types.to(device)
-                try:
-                    assert first_idx.size() == words.size()
-                except:
-                    print("bpes:\n", bpes)
-                    print("src:\n", data['SRC'])
-                    print("first_idx:{}\n{}".format(first_idx.size(), first_idx))
-                    print("words:{},\n{}".format(words.size(), words))
-            elif pretrained_lm != "none":
-                src_heads, src_types = None, None
+            # if pretrained_lm == "sroberta":
+            #
+            #     _src_heads = data['SRC_HEAD']
+            #     _src_types = data['SRC_TYPE']
+            #     bpes, first_idx, src_heads, src_types = prepare_input(tokenizer, srcs, src_heads=_src_heads, src_types=_src_types)
+            #     bpes = bpes.to(device)
+            #     first_idx = first_idx.to(device)
+            #     src_heads = src_heads.to(device)
+            #     src_types = src_types.to(device)
+            #     try:
+            #         assert first_idx.size() == words.size()
+            #     except:
+            #         print("bpes:\n", bpes)
+            #         print("src:\n", data['SRC'])
+            #         print("first_idx:{}\n{}".format(first_idx.size(), first_idx))
+            #         print("words:{},\n{}".format(words.size(), words))
+            if pretrained_lm != "none":
+                src_heads, src_types = data['SRC_HEAD'].to(device), data['SRC_TYPE'].to(device)
                 bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
                 bpes = bpes.to(device)
                 first_idx = first_idx.to(device)
@@ -908,11 +924,16 @@ def train(args):
                 losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels, mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx,
                                  input_elmo=input_elmo, lan_id=lan_id)
                 statistics = None
-            arc_loss, rel_loss = losses
-            arc_loss = arc_loss.sum()
-            rel_loss = rel_loss.sum()
+            arc_loss_source,arc_loss_target, rel_loss_source,rel_loss_target = losses
+            arc_loss_source = arc_loss_source.sum()
+            rel_loss_source = rel_loss_source.sum()
+            arc_loss_target = arc_loss_target.sum()
+            rel_loss_target = rel_loss_target.sum()
+
             # loss_total = arc_loss + rel_loss
-            loss_total = (1 - loss_interpolation) * arc_loss + loss_interpolation * rel_loss
+            loss_total_source = (1 - loss_interpolation) * arc_loss_source + loss_interpolation * rel_loss_source
+            loss_total_target = (1 - loss_interpolation) * arc_loss_target + loss_interpolation * rel_loss_target
+            loss_total = (1.0/11)*loss_total_source+(10.0/11)*loss_total_target
             if statistics is not None:
                 arc_correct, rel_correct, total_arcs, arc_pred_num = statistics
                 overall_arc_correct += arc_correct
@@ -951,8 +972,8 @@ def train(args):
                     num_insts += nbatch
                     num_words += nwords
                     train_loss += loss_total.item()
-                    train_arc_loss += arc_loss.item()
-                    train_rel_loss += rel_loss.item()
+                    train_arc_loss += arc_loss_source.item()+arc_loss_target.item()
+                    train_rel_loss += rel_loss_source.item()+rel_loss_target.item()
 
             # update log
             if step % 100 == 0:

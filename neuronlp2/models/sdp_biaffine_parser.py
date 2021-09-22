@@ -62,7 +62,7 @@ def load_elmo(path):
 	return elmo, output_size
 
 class SDPBiaffineParser(nn.Module):
-	def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
+	def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels_source,num_labels_target,
 				 device=torch.device('cpu'), 
 				 embedd_word=None, embedd_char=None, embedd_pos=None,
 				 use_pretrained_static=True, use_random_static=False,
@@ -118,15 +118,15 @@ class SDPBiaffineParser(nn.Module):
 		# collect all params for language model
 		self.lm_parameters = []
 		# for Pretrained LM
-		if self.pretrained_lm == 'sroberta':
-			config = SemSynRobertaConfig.from_pretrained(lm_config)
-			config.graph["num_rel_labels"] = num_src_labels
-			self.lm_encoder = SemSynRobertaModel.from_pretrained(lm_path, config=config)
-			self.lm_parameters.append(self.lm_encoder)
-			logger.info("[LM] Pretrained Language Model Type: SemSynRoberta")
-			logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
-			lm_hidden_size = self.lm_encoder.config.hidden_size
-		elif self.pretrained_lm != 'none':
+		# if self.pretrained_lm == 'sroberta':
+		# 	config = SemSynRobertaConfig.from_pretrained(lm_config)
+		# 	config.graph["num_rel_labels"] = num_src_labels
+		# 	self.lm_encoder = SemSynRobertaModel.from_pretrained(lm_path, config=config)
+		# 	self.lm_parameters.append(self.lm_encoder)
+		# 	logger.info("[LM] Pretrained Language Model Type: SemSynRoberta")
+		# 	logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
+		# 	lm_hidden_size = self.lm_encoder.config.hidden_size
+		if self.pretrained_lm != 'none':
 			self.lm_encoder = AutoModel.from_pretrained(lm_path)
 			self.lm_parameters.append(self.lm_encoder)
 			logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
@@ -185,7 +185,8 @@ class SDPBiaffineParser(nn.Module):
 
 		self.dropout_in = nn.Dropout2d(p=p_in)
 		self.dropout_out = nn.Dropout2d(p=p_out)
-		self.num_labels = num_labels
+		self.num_labels_source = num_labels_source
+		self.num_labels_target = num_labels_target
 
 		enc_dim = lm_hidden_size + elmo_hidden_size + pretrained_static_size + random_static_size
 		if use_char:
@@ -289,11 +290,15 @@ class SDPBiaffineParser(nn.Module):
 		else:
 			self.arc_h = nn.Linear(hid_size, self.arc_mlp_dim)
 			self.arc_c = nn.Linear(hid_size, self.arc_mlp_dim)
+
 			#self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
-			self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
+			self.arc_attention_source = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
+			# add target
+			self.arc_attention_target = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
 			self.basic_parameters.append(self.arc_h)
 			self.basic_parameters.append(self.arc_c)
-			self.basic_parameters.append(self.arc_attention)
+			self.basic_parameters.append(self.arc_attention_source)
+			self.basic_parameters.append(self.arc_attention_target)
 
 		if self.rel_mlp_dim == -1:
 			self.rel_attention = BiAffine_v2(hid_size, n_out=self.num_labels, bias_x=True, bias_y=True)
@@ -302,10 +307,14 @@ class SDPBiaffineParser(nn.Module):
 			self.rel_h = nn.Linear(hid_size, self.rel_mlp_dim)
 			self.rel_c = nn.Linear(hid_size, self.rel_mlp_dim)
 			#self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
-			self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+			self.rel_attention_source = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels_source, bias_x=True, bias_y=True)
+			# add target
+			self.rel_attention_target = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels_target, bias_x=True, bias_y=True)
 			self.basic_parameters.append(self.rel_h)
 			self.basic_parameters.append(self.rel_c)
-			self.basic_parameters.append(self.rel_attention)
+			self.basic_parameters.append(self.rel_attention_source)
+			self.basic_parameters.append(self.rel_attention_target)
+
 
 	def _basic_parameters(self):
 		params = [p.parameters() for p in self.basic_parameters]
@@ -370,12 +379,14 @@ class SDPBiaffineParser(nn.Module):
 			first_index: (batch, seq_len)
 		"""
 		# (batch, max_bpe_len, hidden_size)
-		if src_heads is not None and src_types is not None:
-			# (batch, max_bpe_len, hidden_size)
-			lm_output = self.lm_encoder(input_ids, heads=src_heads, rels=src_types)[0]
-		else:
-			# (batch, max_bpe_len, hidden_size)
-			lm_output = self.lm_encoder(input_ids)[0]
+		# if src_heads is not None and src_types is not None:
+		# 	# (batch, max_bpe_len, hidden_size)
+		# 	lm_output = self.lm_encoder(input_ids, heads=src_heads, rels=src_types)[0]
+		# else:
+		# 	# (batch, max_bpe_len, hidden_size)
+		# 	lm_output = self.lm_encoder(input_ids)[0]
+		# 不需要进行源规范的编码
+		lm_output = self.lm_encoder(input_ids)[0]
 		size = list(first_index.size()) + [lm_output.size()[-1]]
 		# (batch, seq_len, hidden_size)
 		output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
@@ -597,20 +608,30 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, seq_len, arc_mlp_dim)
 		arc_h, arc_c = self._arc_mlp(encoder_output)
 		# (batch, seq_len, seq_len)
-		arc_logits = self.arc_attention(arc_c, arc_h)
+		arc_logits_source = self.arc_attention_source(arc_c, arc_h)
+		arc_logits_target = self.arc_attention_target(arc_c, arc_h)
 
 		# mask invalid position to -inf for log_softmax
 		if mask is not None:
 			minus_mask = mask_3D.eq(0)
-			arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
+			arc_logits_source = arc_logits_source.masked_fill(minus_mask, float('-inf'))
+			arc_logits_target = arc_logits_target.masked_fill(minus_mask, float('-inf'))
+		# mask 没有target 信息的输入
+		target_mask = heads.gt(0).float()
 		# arc_loss shape [batch, length_c]
-		arc_logits = torch.sigmoid(arc_logits)
-		arc_loss = self.criterion_arc(arc_logits, heads.float())
+		arc_logits_source = torch.sigmoid(arc_logits_source)
+		arc_logits_target = torch.sigmoid(arc_logits_target)
+		arc_loss_source = self.criterion_arc(arc_logits_source, src_heads.float())
+		arc_loss_target = self.criterion_arc(arc_logits_target,heads.float())
 		# mask invalid position to 0 for sum loss
 		if mask is not None:
-			arc_loss = arc_loss * mask_3D
+			arc_loss_source = arc_loss_source * mask_3D
+			arc_loss_target = arc_loss_target * mask_3D*target_mask
+
+
 		# [batch, length - 1] -> [batch] remove the symbolic root
-		arc_loss = arc_loss[:, 1:].sum(dim=1)
+		arc_loss_source = arc_loss_source[:, 1:].sum(dim=1)
+		arc_loss_target = arc_loss_target[:, 1:].sum(dim=1)
 
 		#print ('graph_matrix:\n', graph_matrix)
 		#print ('arc_loss:', arc_losses[-1].sum())
@@ -618,17 +639,23 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, length, rel_mlp_dim)
 		rel_h, rel_c = self._rel_mlp(encoder_output)
 		# (batch, n_rels, seq_len, seq_len)
-		rel_logits = self.rel_attention(rel_c, rel_h)
+		rel_logits_source = self.rel_attention_source(rel_c, rel_h)
+		rel_logits_target = self.rel_attention_target(rel_c, rel_h)
 		#rel_loss = self.criterion(out_type.transpose(1, 2), rels)
-		rel_loss = self.criterion_label(rel_logits, rels)
+		rel_loss_source = self.criterion_label(rel_logits_source, src_types)
+		rel_loss_target = self.criterion_label(rel_logits_target, rels)
 		if mask is not None:
-			rel_loss = rel_loss * mask_3D
-		rel_loss = rel_loss * heads
-		rel_loss = rel_loss[:, 1:].sum(dim=1)
+			rel_loss_source = rel_loss_source * mask_3D
+			rel_loss_target = rel_loss_target * mask_3D * target_mask
+		rel_loss_source = rel_loss_source * src_heads
+		rel_loss_target = rel_loss_target * heads
 
-		statistics = self.accuracy(arc_logits, rel_logits, heads, rels, mask_3D)
+		rel_loss_source = rel_loss_source[:, 1:].sum(dim=1)
+		rel_loss_target = rel_loss_target[:, 1:].sum(dim=1)
 
-		return (arc_loss, rel_loss), statistics
+		statistics = self.accuracy(arc_logits_source, rel_logits_source, src_heads, src_types, mask_3D)
+
+		return (arc_loss_source,arc_loss_target,rel_loss_source, rel_loss_target), statistics
 
 
 	def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
@@ -671,12 +698,12 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, seq_len, arc_mlp_dim)
 		arc_h, arc_c = self._arc_mlp(encoder_output)
 		# (batch, seq_len, seq_len)
-		arc_logits = self.arc_attention(arc_c, arc_h)
+		arc_logits = self.arc_attention_target(arc_c, arc_h)
 
 		# (batch, length, rel_mlp_dim)
 		rel_h, rel_c = self._rel_mlp(encoder_output)
 		# (batch, n_rels, seq_len, seq_len)
-		rel_logits = self.rel_attention(rel_c, rel_h)
+		rel_logits = self.rel_attention_target(rel_c, rel_h)
 		# (batch, n_rels, seq_len_c, seq_len_h)
 		# => (batch, length_h, length_c, num_labels)
 		#rel_logits = rel_logits.permute(0, 3, 2, 1)
