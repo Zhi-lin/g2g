@@ -843,7 +843,7 @@ def train(args):
         #    torch.cuda.empty_cache()
         gc.collect()
         # for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
-        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True, task_type="sdp")):
+        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True, task_type="sdp",dict_para={"data_source":False})):
             if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)  # print ("lan_id:",lan_id)

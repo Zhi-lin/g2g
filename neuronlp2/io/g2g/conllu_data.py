@@ -219,7 +219,7 @@ def read_bucketed_data_MMoE(source_path: str, word_alphabet: Alphabet, char_alph
 
             # heads,type ids
             target_flag = False
-            for hid in enumerate(hids):
+            for hid in hids:
                 if hid:
                     target_flag = True
             if target_flag:
