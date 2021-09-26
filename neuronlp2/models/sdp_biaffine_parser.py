@@ -590,7 +590,7 @@ class SDPBiaffineParser(nn.Module):
 
 	def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, 
 				bpes=None, first_idx=None, input_elmo=None, mask=None, lan_id=None,
-				src_heads=None, src_types=None):
+				src_heads=None, src_types=None,data_source_flag=True):
 		# Pre-process
 		batch_size, seq_len = input_word.size()
 		# (batch, seq_len), seq mask, where at position 0 is 0
@@ -608,30 +608,33 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, seq_len, arc_mlp_dim)
 		arc_h, arc_c = self._arc_mlp(encoder_output)
 		# (batch, seq_len, seq_len)
-		arc_logits_source = self.arc_attention_source(arc_c, arc_h)
-		arc_logits_target = self.arc_attention_target(arc_c, arc_h)
+		if data_source_flag:
+			arc_logits = self.arc_attention_source(arc_c, arc_h)
+		else:
+			arc_logits = self.arc_attention_target(arc_c, arc_h)
 
 		# mask invalid position to -inf for log_softmax
 		if mask is not None:
 			minus_mask = mask_3D.eq(0)
-			arc_logits_source = arc_logits_source.masked_fill(minus_mask, float('-inf'))
-			arc_logits_target = arc_logits_target.masked_fill(minus_mask, float('-inf'))
+			arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
+
 		# mask 没有target 信息的输入
 		target_mask = heads.gt(0).float()
 		# arc_loss shape [batch, length_c]
-		arc_logits_source = torch.sigmoid(arc_logits_source)
-		arc_logits_target = torch.sigmoid(arc_logits_target)
-		arc_loss_source = self.criterion_arc(arc_logits_source, src_heads.float())
-		arc_loss_target = self.criterion_arc(arc_logits_target,heads.float())
+		arc_logits = torch.sigmoid(arc_logits)
+		if data_source_flag:
+			arc_loss = self.criterion_arc(arc_logits, src_heads.float())
+		else:
+			arc_loss = self.criterion_arc(arc_logits, heads.float())
 		# mask invalid position to 0 for sum loss
 		if mask is not None:
-			arc_loss_source = arc_loss_source * mask_3D
-			arc_loss_target = arc_loss_target * mask_3D*target_mask
+			arc_loss = arc_loss * mask_3D
+
 
 
 		# [batch, length - 1] -> [batch] remove the symbolic root
-		arc_loss_source = arc_loss_source[:, 1:].sum(dim=1)
-		arc_loss_target = arc_loss_target[:, 1:].sum(dim=1)
+		arc_loss = arc_loss[:, 1:].sum(dim=1)
+
 
 		#print ('graph_matrix:\n', graph_matrix)
 		#print ('arc_loss:', arc_losses[-1].sum())
@@ -639,23 +642,29 @@ class SDPBiaffineParser(nn.Module):
 		# (batch, length, rel_mlp_dim)
 		rel_h, rel_c = self._rel_mlp(encoder_output)
 		# (batch, n_rels, seq_len, seq_len)
-		rel_logits_source = self.rel_attention_source(rel_c, rel_h)
-		rel_logits_target = self.rel_attention_target(rel_c, rel_h)
+		if data_source_flag:
+			rel_logits = self.rel_attention_source(rel_c, rel_h)
+		else:
+			rel_logits = self.rel_attention_target(rel_c, rel_h)
 		#rel_loss = self.criterion(out_type.transpose(1, 2), rels)
-		rel_loss_source = self.criterion_label(rel_logits_source, src_types)
-		rel_loss_target = self.criterion_label(rel_logits_target, rels)
+		if data_source_flag:
+			rel_loss = self.criterion_label(rel_logits, src_types)
+		else:
+			rel_loss = self.criterion_label(rel_logits, rels)
 		if mask is not None:
-			rel_loss_source = rel_loss_source * mask_3D
-			rel_loss_target = rel_loss_target * mask_3D * target_mask
-		rel_loss_source = rel_loss_source * src_heads
-		rel_loss_target = rel_loss_target * heads
+			rel_loss = rel_loss * mask_3D
+		if data_source_flag:
+			rel_loss = rel_loss * src_heads
+		else:
+			rel_loss = rel_loss * heads
 
-		rel_loss_source = rel_loss_source[:, 1:].sum(dim=1)
-		rel_loss_target = rel_loss_target[:, 1:].sum(dim=1)
+		rel_loss_source = rel_loss[:, 1:].sum(dim=1)
+		if data_source_flag:
+			statistics = self.accuracy(arc_logits, rel_logits, src_heads, src_types, mask_3D)
+		else:
+			statistics = self.accuracy(arc_logits, rel_logits, heads, rels, mask_3D)
 
-		statistics = self.accuracy(arc_logits_source, rel_logits_source, src_heads, src_types, mask_3D)
-
-		return (arc_loss_source,arc_loss_target,rel_loss_source, rel_loss_target), statistics
+		return (arc_loss,rel_loss), statistics
 
 
 	def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 

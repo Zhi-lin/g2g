@@ -42,14 +42,17 @@ def iterate_bucketed_batch(data, batch_size, unk_replace=0., shuffle=False,**kwa
             indices = torch.randperm(bucket_size).long()
             indices = indices.to(words.device)
         head = data["HEAD"]
+        start_idx = 0
         if not kwargs["data_source"]:  # 有些数据是空的
             while start_idx<bucket_size:
                 ind = []
                 while len(ind) < batch_size and start_idx<bucket_size:
-                    if not all([y == 0 for y in x for x in head[start_idx]]):
+                    if torch.sum(head[start_idx]).item()!=0:
                         ind.append(start_idx)
                     start_idx +=1
                 excerpt = ind
+                if len(ind)<1:
+                    break
                 lengths = data['LENGTH'][excerpt]
                 batch_length = lengths.max().item()
                 batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths, "SRC": data["SRC"][excerpt]}  # , 'SRC': data['SRC'][excerpt]}

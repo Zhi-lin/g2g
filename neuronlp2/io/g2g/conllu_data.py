@@ -230,7 +230,7 @@ def read_bucketed_data_MMoE(source_path: str, word_alphabet: Alphabet, char_alph
                     hid_inputs[i, h, inst_size:] = PAD_ID_TAG
                     tid_inputs[i, h, inst_size:] = PAD_ID_TAG
             else:
-                print("没有target信息")
+                # print("没有target信息")
                 hid_inputs[i,:,:] = 0
                 tid_inputs[i,:,:] = 0
 

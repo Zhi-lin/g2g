@@ -822,7 +822,8 @@ def train(args):
             iterate = iterate_data
         multi_lan_iter = False
         lan_id = None
-    for epoch in range(1, num_epochs + 1):
+    data_source_flag = True
+    for epoch in range(1, num_epochs*2 + 1):
         num_epochs_without_improvement += 1
         start_time = time.time()
         train_loss = 0.
@@ -843,7 +844,11 @@ def train(args):
         #    torch.cuda.empty_cache()
         gc.collect()
         # for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
-        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True, task_type="sdp",dict_para={"data_source":False})):
+        if data_source_flag:
+            logger.info("训练源信息")
+        else:
+            logger.info("训练目标信息")
+        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True,task_type="sdp",switch_lan=True,data_source=data_source_flag)):
             if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)  # print ("lan_id:",lan_id)
@@ -904,7 +909,7 @@ def train(args):
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
                 losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
-                                             src_heads=src_heads, src_types=src_types)
+                                             src_heads=src_heads, src_types=src_types,data_source_flag=data_source_flag)
             else:
                 pres = None
                 masks_enc = data['MASK_ENC'].to(device)
@@ -924,16 +929,15 @@ def train(args):
                 losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels, mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx,
                                  input_elmo=input_elmo, lan_id=lan_id)
                 statistics = None
-            arc_loss_source,arc_loss_target, rel_loss_source,rel_loss_target = losses
-            arc_loss_source = arc_loss_source.sum()
-            rel_loss_source = rel_loss_source.sum()
-            arc_loss_target = arc_loss_target.sum()
-            rel_loss_target = rel_loss_target.sum()
+            arc_loss, rel_loss = losses
+            arc_loss = arc_loss.sum()
+            rel_loss = rel_loss.sum()
+
 
             # loss_total = arc_loss + rel_loss
-            loss_total_source = (1 - loss_interpolation) * arc_loss_source + loss_interpolation * rel_loss_source
-            loss_total_target = (1 - loss_interpolation) * arc_loss_target + loss_interpolation * rel_loss_target
-            loss_total = (1.0/11)*loss_total_source+(10.0/11)*loss_total_target
+            loss_total = (1 - loss_interpolation) * arc_loss + loss_interpolation * rel_loss
+
+
             if statistics is not None:
                 arc_correct, rel_correct, total_arcs, arc_pred_num = statistics
                 overall_arc_correct += arc_correct
@@ -972,8 +976,8 @@ def train(args):
                     num_insts += nbatch
                     num_words += nwords
                     train_loss += loss_total.item()
-                    train_arc_loss += arc_loss_source.item()+arc_loss_target.item()
-                    train_rel_loss += rel_loss_source.item()+rel_loss_target.item()
+                    train_arc_loss += arc_loss.item()
+                    train_rel_loss += rel_loss.item()
 
             # update log
             if step % 100 == 0:
@@ -992,6 +996,7 @@ def train(args):
                     sys.stdout.write(log_info)
                     sys.stdout.flush()
                     num_back = len(log_info)
+        data_source_flag = not data_source_flag
         if not noscreen:
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
@@ -1027,7 +1032,7 @@ def train(args):
                 torch.save(single_network.lm_encoder.state_dict(), roberta_path)
             continue
         else:
-            if epoch % eval_every == 0:
+            if epoch % eval_every == 0 and epoch%2==0:
                 if epoch < args.tol_epoch:
                     print("模型训练过短，不进行dev集验证，跳过")
                     continue
