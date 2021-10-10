@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
-from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2,BiAffine_transfer
+from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2,BiAffine_transfer,BiAffine_LS_GGLT
 from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, GraphAttentionNetwork
 from neuronlp2.nn.dropout import drop_input_independent
@@ -306,6 +306,8 @@ class SDPBiaffineParser(nn.Module):
 			#self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
 			if self.method == "linear":
 				self.arc_attention = BiAffine_transfer(self.arc_mlp_dim,bias_x=True,bias_y=False)
+			elif self.method == "LS+GGLT":
+				self.arc_attention = BiAffine_LS_GGLT(self.arc_mlp_dim,bias_x=True,bias_y=False)
 			else:
 				self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
 			self.basic_parameters.append(self.arc_h)
@@ -321,6 +323,8 @@ class SDPBiaffineParser(nn.Module):
 			#self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
 			if self.method =="linear":
 				self.rel_attention = BiAffine_transfer(self.rel_mlp_dim,n_out_old=self.old_label,n_out_new=self.num_labels,bias_x=True,bias_y=True)
+			elif self.method == "LS+GGLT":
+				self.rel_attention = BiAffine_LS_GGLT(self.rel_mlp_dim,n_out_old=self.old_label,n_out_new=self.num_labels,bias_x=True,bias_y=True)
 			else:
 				self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
 			# Jeffrey-2021.9.9: 加入 source label的embedding

@@ -634,7 +634,7 @@ def train(args):
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if model_type == 'Biaffine':
-        if args.model_transfer =="linear":
+        if args.model_transfer in ["linear","LS+GGLT"]:
             network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, device=device, embedd_word=word_table, embedd_char=char_table,
                                         use_pretrained_static=use_pretrained_static, use_random_static=use_random_static, use_elmo=use_elmo, elmo_path=elmo_path, pretrained_lm=pretrained_lm,
                                         lm_path=lm_path, lm_config=args.lm_config, num_lans=num_lans,method=args.model_transfer,old_label=args.old_labels)
@@ -649,25 +649,25 @@ def train(args):
     num_gpu = torch.cuda.device_count()
     logger.info("GPU Number: %d" % num_gpu)
     if args.fine_tune:
+        logger.info("*********** 继续finetune继续finetune *******************")
+        logger.info("*********** 继续finetune继续finetune *******************")
+        logger.info("*********** 继续finetune继续finetune *******************")
         if args.pretrain_roberta != "none":
             logger.info("Loading roberta state dict!")
             network.lm_encoder.load_state_dict(torch.load(args.pretrain_roberta, map_location=device))
         else:
-            try:
-                network.load_state_dict(torch.load(pretrain, map_location=device))
-            except:
-                pre_dict = torch.load(pretrain, map_location=device)
-                #  ************* do not load attention matrix ****************
-                # now_dict = network.state_dict()
-                # update_dict = {}
-                # for k, v in pre_dict.items():
-                #     if k in now_dict and k not in ["arc_attention.weight","rel_attention.weight"]:
-                #         update_dict[k] = v
-                # now_dict.update(update_dict)
-                # network.load_state_dict(now_dict)
-                # *********** end *****************
-                network.load_state_dict(pre_dict['state_dict'])
-            logger.info("Loading pretrained model, Starting finetune ")
+
+            #  ************* do not load attention matrix ****************
+            # now_dict = network.state_dict()
+            # update_dict = {}
+            # for k, v in pre_dict.items():
+            #     if k in now_dict and k not in ["arc_attention.weight","rel_attention.weight"]:
+            #         update_dict[k] = v
+            # now_dict.update(update_dict)
+            # network.load_state_dict(now_dict)
+            # *********** end *****************
+            pre_dict = torch.load(pretrain, map_location=device)
+            network.load_state_dict(pre_dict['state_dict'])
         logger.info("Loading pre-trained model from: %s" % pretrain)
 
     if num_gpu > 1:
@@ -698,9 +698,9 @@ def train(args):
     optimizer, scheduler = get_optimizer(optim_parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps, schedule, hidden_size, decay_steps)
     # print ("parameters: {} \n".format(len(network.parameters())))
     if os.path.exists(pre_model_name):
-        logger.info("*********** 继续训练继续训练 *******************")
-        logger.info("*********** 继续训练继续训练 *******************")
-        logger.info("*********** 继续训练继续训练 *******************")
+        logger.info("*********** 继续迁移继续迁移训练 *******************")
+        logger.info("*********** 继续迁移继续迁移训练 *******************")
+        logger.info("*********** 继续迁移继续迁移训练 *******************")
         if pre_model_name !="none":
             update_new_dict = {}
             new_dict = network.state_dict()
@@ -730,7 +730,16 @@ def train(args):
             # update_new_dict["arc_attention.weight"] = weight1.transpose(-1,-3)
             # update_new_dict["rel_attention.weight"] = weight2.transpose(-1,-3)
             new_dict.update(update_new_dict)
-            network.load_state_dict(new_dict)
+            if args.model_transfer =="LS+GGLT":
+                logger.info("加载LS+GGLT训练参数")
+                # new_dict 没有更新weight_LS
+                LS_dict = torch.load(pretrain, map_location=device)
+                LS_para = LS_dict["state_dict"]
+                new_dict["arc_attention.weight_LS"] = LS_para["arc_attention.weight"]
+                new_dict["rel_attention.weight_LS"] = LS_para["rel_attention.weight"]
+                network.load_state_dict(new_dict)
+            else:
+                network.load_state_dict(new_dict)
 
             # optimizer.load_state_dict(pre_dict['optimizer'])
 
@@ -865,6 +874,7 @@ def train(args):
         num_back = 0
         num_nans = 0
         overall_arc_correct, overall_rel_correct, overall_total_arcs, overall_total_arcs_pred_num = 0, 0, 0, 0
+
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -1118,22 +1128,22 @@ def train(args):
                         # gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
                         # gold_writer.start(gold_filename)
 
-                        print('Evaluating test:')
-                        if data_test:
-                            test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
-                                beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0)
-
-                            test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
-                            test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
-                            test_root_correct, test_total_root, test_total_inst = test_stats_root
-                            test_arc_f = f1_score[0]
-                            test_type_f = f1_score[1]
-                            test_arc_p = f1_score[2]
-                            test_arc_r = f1_score[3]
-                            test_type_p = f1_score[4]
-                            test_type_r = f1_score[5]
-
-                            pred_writer.close()
+                        # print('Evaluating test:')
+                        # if data_test:
+                        #     test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                        #         beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0)
+                        #
+                        #     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                        #     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                        #     test_root_correct, test_total_root, test_total_inst = test_stats_root
+                        #     test_arc_f = f1_score[0]
+                        #     test_type_f = f1_score[1]
+                        #     test_arc_p = f1_score[2]
+                        #     test_arc_r = f1_score[3]
+                        #     test_type_p = f1_score[4]
+                        #     test_type_r = f1_score[5]
+                        #
+                        #     pred_writer.close()
 
                         # gold_writer.close()
                     else:
@@ -1165,6 +1175,22 @@ def train(args):
                         patient = 0
 
             if num_epochs_without_improvement >= patient_epochs:
+                print('Evaluating test:')
+                if data_test:
+                    test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                                                                                     beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter, prev_LF=0.0)
+
+                    test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                    test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                    test_root_correct, test_total_root, test_total_inst = test_stats_root
+                    test_arc_f = f1_score[0]
+                    test_type_f = f1_score[1]
+                    test_arc_p = f1_score[2]
+                    test_arc_r = f1_score[3]
+                    test_type_p = f1_score[4]
+                    test_type_r = f1_score[5]
+
+                    pred_writer.close()
                 logger.info("More than %d epochs without improvement, exit!" % patient_epochs)
                 exit()
 
@@ -1453,7 +1479,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--tol_epoch', type=int, default=0)
     args_parser.add_argument('--pre_epoch', default=False, action='store_true', help='pretrained for setting epoch, then end')
     args_parser.add_argument('--target', type=str, default='none')
-    args_parser.add_argument('--model_transfer', type=str, choices=["linear","none"],default='none')
+    args_parser.add_argument('--model_transfer', type=str, choices=["linear","LS+GGLT","none"],default='none')
     args_parser.add_argument('--old_labels', type=int,default=0)
 
     args = args_parser.parse_args()
